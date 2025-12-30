@@ -23,6 +23,7 @@
 /* USER CODE BEGIN Includes */
 #include "RC522.h"
 #include "string.h"
+#include "rfid_handler.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -44,8 +45,9 @@
 SPI_HandleTypeDef hspi1;
 
 /* USER CODE BEGIN PV */
+volatile uint8_t cardFlag = 0;
 uint8_t status;
-uint8_t str[16];
+uint8_t str[MAX_LEN];
 uint8_t MasterCardID[5] = {0};
 uint8_t CurrentCardID[5] = {0};
 uint8_t hasMasterCard = 0;
@@ -99,9 +101,11 @@ int main(void)
   MX_GPIO_Init();
   MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
+  /* USER CODE BEGIN 2 */
   MFRC522_Init();
-
-
+  MFRC522_EnableCardDetection();
+  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -111,45 +115,72 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-//	  status = MFRC522_Request(PICC_REQIDL,str);
-//	  status = MFRC522_Anticoll(str);
-//	  memcpy(sNum,str,5);
-//	  HAL_Delay(200);
+	  MFRC522_Init();
+	  MFRC522_EnableCardDetection();
+	  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 0, 0);
+	  HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
+	  /* USER CODE END 2 */
 
-	  if (MFRC522_Request(PICC_REQIDL, str) == MI_OK)
-	      {
-	          // 2. Read the UID
-	          if (MFRC522_Anticoll(str) == MI_OK)
-	          {
-	              // First time run
-	              if (hasMasterCard == 0)
-	              {
-	                  // Storing the card as the master card
-	                  memcpy(MasterCardID, str, 5);
-	                  hasMasterCard = 1;
-	              }
-	              else
-	                          {
-	                              memcpy(CurrentCardID, str, 5);
-	                              if (memcmp(MasterCardID, CurrentCardID, 5) == 0)
-	                              {
-	                                  matchflag = 1;
-	                              }
-	                              else
-	                              {
-	                                  matchflag = 0;
-	                              }
-	                          }
+	  /* USER CODE BEGIN WHILE */
+	  while (1)
+	  {
+	  /* USER CODE END WHILE */
 
-	                          MFRC522_Halt();
-	                      }
+	  /* USER CODE BEGIN 3 */
+		  if(cardFlag) {
+		  cardFlag = 0;
 
-	                  }
+		  // Read card UID
+		  if(MFRC522_Anticoll(str) == MI_OK) {
 
-	                  HAL_Delay(200);
-	              }
-  /* USER CODE END 3 */
+		  // First card - store as master
+		  if(hasMasterCard == 0) {
+		  memcpy(MasterCardID, str, 5);
+		  hasMasterCard = 1;
+		  // Short blink - master stored
+		  HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_SET);
+		  HAL_Delay(100);
+		  HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_RESET);
+		  }
+		  // Compare with master
+		  else {
+		  memcpy(CurrentCardID, str, 5);
+
+		  if(memcmp(MasterCardID, CurrentCardID, 5) == 0) {
+		  matchflag = 1;
+		  // Blink Green- match
+		  HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_SET);
+		  HAL_Delay(500);
+		  HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_RESET);
+		  matchflag = 0;
+
+		  } else {
+		  matchflag = 0;
+		  // Blink Red - no match
+		  HAL_GPIO_WritePin(GPIOD, GPIO_PIN_14, GPIO_PIN_SET);
+		  HAL_Delay(500);
+		  HAL_GPIO_WritePin(GPIOD, GPIO_PIN_14, GPIO_PIN_RESET);
+		  }
+
+		  memset(CurrentCardID, 0, 5);
+		  }
+
+		  MFRC522_Halt();
+		  }
+
+	          HAL_Delay(1000);
+	          MFRC522_ClearInterrupts();
+	          MFRC522_EnableCardDetection();
+	      }
+
+	      HAL_Delay(50);
+	  }
+  }
+
 }
+
+  /* USER CODE END 3 */
+
 
 /**
   * @brief System Clock Configuration
@@ -174,7 +205,7 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
   RCC_OscInitStruct.PLL.PLLM = 8;
-  RCC_OscInitStruct.PLL.PLLN = 160;
+  RCC_OscInitStruct.PLL.PLLN = 168;
   RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
   RCC_OscInitStruct.PLL.PLLQ = 7;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
@@ -220,7 +251,7 @@ static void MX_SPI1_Init(void)
   hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
   hspi1.Init.NSS = SPI_NSS_SOFT;
-  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_8;
+  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_16;
   hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
@@ -247,26 +278,63 @@ static void MX_GPIO_Init(void)
 /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
-  __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
+  __HAL_RCC_GPIOE_CLK_ENABLE();
+  __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, RC522_CS_Pin|RC522_RST_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(RC522_CS_GPIO_Port, RC522_CS_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pins : RC522_CS_Pin RC522_RST_Pin */
-  GPIO_InitStruct.Pin = RC522_CS_Pin|RC522_RST_Pin;
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(RC522_RST_GPIO_Port, RC522_RST_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12|GPIO_PIN_14, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin : RC522_CS_Pin */
+  GPIO_InitStruct.Pin = RC522_CS_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+  HAL_GPIO_Init(RC522_CS_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : RC522_RST_Pin */
+  GPIO_InitStruct.Pin = RC522_RST_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(RC522_RST_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : EXT_INT_Pin */
+  GPIO_InitStruct.Pin = EXT_INT_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+  HAL_GPIO_Init(EXT_INT_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : PD12 PD14 */
+  GPIO_InitStruct.Pin = GPIO_PIN_12|GPIO_PIN_14;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
+
+  /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
 
 /* USER CODE BEGIN MX_GPIO_Init_2 */
 /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
-
+/* USER CODE BEGIN 4 */
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
+    if(GPIO_Pin == GPIO_PIN_7) {  // PE7 IRQ
+        cardFlag = 1;
+    }
+}
 /* USER CODE END 4 */
 
 /**
